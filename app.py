@@ -35,18 +35,20 @@ def load_excel(file):
         return None
 
 
-def clean_data(df):
+ddef clean_data(df):
     # Remove empty rows
     df = df.dropna(how="all")
 
     # Remove empty columns
     df = df.dropna(axis=1, how="all")
 
-    # Forward fill (handle merged cells)
-    df = df.fillna(method="ffill")
+    # Forward fill (fix merged cells - pandas 2.x safe)
+    df = df.ffill()
 
-    # Trim whitespace
-    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    # Trim whitespace (safe & faster)
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].astype(str).str.strip()
 
     return df
 
