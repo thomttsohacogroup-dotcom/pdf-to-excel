@@ -2,23 +2,16 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Optional fuzzy matching
-try:
-    from rapidfuzz import process, fuzz
-    FUZZY_AVAILABLE = True
-except:
-    FUZZY_AVAILABLE = False
+st.set_page_config(page_title="Drug Excel Mapper", layout="centered")
 
-st.set_page_config(page_title="Excel Mapper", layout="centered")
+st.title("💊 Drug Data Mapper")
+st.write("Upload Excel → Clean → Auto Map → Export")
 
-st.title("📊 Excel Data Mapper")
-st.write("Upload Excel → Clean → Map → Export")
-
-# ===== TARGET SCHEMA =====
+# ===== TARGET SCHEMA (DƯỢC) =====
 TARGET_COLUMNS = [
     "STT",
     "Tên thuốc",
-    "Hoạt chất chính - Hàm lượng",
+    "Hoạt chất",
     "Dạng bào chế",
     "Quy cách đóng gói",
     "Tiêu chuẩn",
@@ -35,24 +28,24 @@ def load_excel(file):
         df = pd.read_excel(file)
         return df
     except Exception as e:
-        st.error(f"Error loading file: {e}")
+        st.error(f"Lỗi đọc file: {e}")
         return None
 
 
 def clean_data(df):
-    # Remove empty-like strings first
+    # Xoá ô rỗng giả
     df = df.replace(r'^\s*$', None, regex=True)
 
-    # Remove empty rows
+    # Xoá dòng trống
     df = df.dropna(how="all")
 
-    # Remove empty columns
+    # Xoá cột trống
     df = df.dropna(axis=1, how="all")
 
-    # Forward fill (fix merged cells - pandas 2.x safe)
+    # Fix merged cell
     df = df.ffill()
 
-    # Trim whitespace safely
+    # Trim text
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).str.strip()
@@ -63,17 +56,25 @@ def clean_data(df):
 def auto_map_columns(input_columns):
     mapping = {}
 
-    for target in TARGET_COLUMNS:
-        # Exact match first
-        for col in input_columns:
-            if col and col.lower() == target.lower():
-                mapping[target] = col
+    column_alias = {
+        "STT": ["stt", "số thứ tự"],
+        "Tên thuốc": ["tên thuốc", "drug name", "product name"],
+        "Hoạt chất": ["hoạt chất", "thành phần", "active ingredient"],
+        "Dạng bào chế": ["dạng bào chế", "dosage form"],
+        "Quy cách đóng gói": ["quy cách", "đóng gói", "packaging"],
+        "Tiêu chuẩn": ["tiêu chuẩn", "standard"],
+        "Tuổi thọ (tháng)": ["tuổi thọ", "hạn dùng", "shelf life"],
+        "Số đăng ký": ["số đăng ký", "registration number", "sdk"],
+        "Cơ sở đăng ký": ["cơ sở đăng ký", "marketing authorization holder"],
+        "Cơ sở sản xuất": ["cơ sở sản xuất", "manufacturer"]
+    }
 
-        # Fuzzy match
-        if target not in mapping and FUZZY_AVAILABLE:
-            match = process.extractOne(target, input_columns, scorer=fuzz.ratio)
-            if match and match[1] > 70:
-                mapping[target] = match[0]
+    for target, aliases in column_alias.items():
+        for col in input_columns:
+            col_lower = str(col).lower()
+            if any(alias in col_lower for alias in aliases):
+                mapping[target] = col
+                break
 
     return mapping
 
@@ -92,6 +93,19 @@ def map_columns(df, mapping):
     return new_df
 
 
+def split_active_ingredient(df):
+    # Tách "Hoạt chất - Hàm lượng"
+    if "Hoạt chất" in df.columns:
+        try:
+            split_df = df["Hoạt chất"].str.split("-", n=1, expand=True)
+            if split_df.shape[1] == 2:
+                df["Hoạt chất"] = split_df[0].str.strip()
+                df["Hàm lượng"] = split_df[1].str.strip()
+        except:
+            pass
+    return df
+
+
 def export_excel(df):
     output = io.BytesIO()
     df.to_excel(output, index=False)
@@ -107,57 +121,43 @@ if uploaded_file:
     df = load_excel(uploaded_file)
 
     if df is not None:
-        st.subheader("🔍 Preview (first 10 rows)")
+        st.subheader("🔍 Preview dữ liệu gốc")
         st.dataframe(df.head(10))
 
         df_clean = clean_data(df)
 
-        st.subheader("🧹 Cleaned Data Preview")
+        st.subheader("🧹 Sau khi làm sạch")
         st.dataframe(df_clean.head(10))
 
-        st.subheader("🔗 Column Mapping")
+        mapping = auto_map_columns(df_clean.columns)
 
-        auto_mapping = auto_map_columns(df_clean.columns)
+        st.subheader("🔗 Auto Mapping")
+        st.write(mapping)
 
-        mapping = {}
-
-        for target in TARGET_COLUMNS:
-            default_value = auto_mapping.get(target, None)
-
-            options = [None] + list(df_clean.columns)
-
-            if default_value in df_clean.columns:
-                default_index = options.index(default_value)
-            else:
-                default_index = 0
-
-            mapping[target] = st.selectbox(
-                f"Map '{target}'",
-                options=options,
-                index=default_index
-            )
-
-        if st.button("🚀 Process Data"):
-            with st.spinner("Processing..."):
+        if st.button("🚀 Xử lý dữ liệu"):
+            with st.spinner("Đang xử lý..."):
                 try:
                     df_mapped = map_columns(df_clean, mapping)
 
-                    st.subheader("✅ Result Preview")
+                    # Optional: tách hoạt chất
+                    df_mapped = split_active_ingredient(df_mapped)
+
+                    st.subheader("✅ Kết quả")
                     st.dataframe(df_mapped.head(10))
 
                     output = export_excel(df_mapped)
 
-                    st.success("Processing completed!")
+                    st.success("Xử lý thành công!")
 
                     st.download_button(
-                        label="📥 Download Excel",
+                        label="📥 Tải file Excel",
                         data=output,
-                        file_name="result.xlsx",
+                        file_name="drug_result.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
                 except Exception as e:
-                    st.error(f"Error during processing: {e}")
+                    st.error(f"Lỗi xử lý: {e}")
 
 else:
-    st.info("Please upload an Excel file to begin.")
+    st.info("👉 Vui lòng upload file Excel để bắt đầu")
