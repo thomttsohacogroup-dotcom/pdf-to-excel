@@ -16,11 +16,16 @@ st.write("Upload Excel → Clean → Map → Export")
 
 # ===== TARGET SCHEMA =====
 TARGET_COLUMNS = [
-    "No.",
-    "Full Name",
-    "Date of Birth",
-    "ID Number",
-    "Address"
+    "STT",
+    "Tên thuốc",
+    "Hoạt chất chính - Hàm lượng",
+    "Dạng bào chế",
+    "Quy cách đóng gói",
+    "Tiêu chuẩn",
+    "Tuổi thọ (tháng)",
+    "Số đăng ký",
+    "Cơ sở đăng ký",
+    "Cơ sở sản xuất"
 ]
 
 # ===== FUNCTIONS =====
