@@ -1,66 +1,148 @@
 import streamlit as st
 import pandas as pd
-import pdfplumber
 import io
+from datetime import datetime
 
-st.set_page_config(page_title="PDF to Excel", layout="centered")
+# Optional fuzzy matching
+try:
+    from rapidfuzz import process, fuzz
+    FUZZY_AVAILABLE = True
+except:
+    FUZZY_AVAILABLE = False
 
-st.title("📄 PDF to Excel Converter")
-st.write("Upload file PDF có bảng → xuất ra Excel")
+st.set_page_config(page_title="Excel Mapper", layout="centered")
 
-# Upload file
-uploaded_file = st.file_uploader("Chọn file PDF", type="pdf")
+st.title("📊 Excel Data Mapper")
+st.write("Upload Excel → Clean → Map → Export")
 
-# Mapping cột (bạn có thể chỉnh lại nếu cần)
-COLUMN_MAPPING = {
-    'STT': 'No.',
-    'Họ và Tên': 'Full Name'
-}
+# ===== TARGET SCHEMA =====
+TARGET_COLUMNS = [
+    "No.",
+    "Full Name",
+    "Date of Birth",
+    "ID Number",
+    "Address"
+]
 
-def extract_tables_from_pdf(file):
-    all_tables = []
+# ===== FUNCTIONS =====
 
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            tables = page.extract_tables()
-            for table in tables:
-                if table and len(table) > 1:
-                    df = pd.DataFrame(table[1:], columns=table[0])
-                    all_tables.append(df)
-
-    return all_tables
-
-def process_tables(tables):
-    if not tables:
+def load_excel(file):
+    try:
+        df = pd.read_excel(file)
+        return df
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
         return None
 
-    combined_df = pd.concat(tables, ignore_index=True)
-    combined_df = combined_df.rename(columns=COLUMN_MAPPING)
 
-    return combined_df
+def clean_data(df):
+    # Remove empty rows
+    df = df.dropna(how="all")
 
-if uploaded_file is not None:
-    st.success("✅ Upload thành công!")
+    # Remove empty columns
+    df = df.dropna(axis=1, how="all")
 
-    if st.button("🚀 Xử lý PDF"):
-        with st.spinner("Đang xử lý..."):
-            tables = extract_tables_from_pdf(uploaded_file)
-            df = process_tables(tables)
+    # Forward fill (handle merged cells)
+    df = df.fillna(method="ffill")
 
-            if df is not None:
-                st.subheader("📊 Kết quả:")
-                st.dataframe(df)
+    # Trim whitespace
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
 
-                # Xuất Excel
-                output = io.BytesIO()
-                df.to_excel(output, index=False)
-                output.seek(0)
+    return df
 
-                st.download_button(
-                    label="📥 Tải file Excel",
-                    data=output,
-                    file_name="result.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.error("❌ Không tìm thấy bảng trong PDF")
+
+def auto_map_columns(input_columns):
+    mapping = {}
+
+    for target in TARGET_COLUMNS:
+        # Exact match first
+        for col in input_columns:
+            if col.lower() == target.lower():
+                mapping[target] = col
+
+        # Fuzzy match
+        if target not in mapping and FUZZY_AVAILABLE:
+            match = process.extractOne(target, input_columns, scorer=fuzz.ratio)
+            if match and match[1] > 70:
+                mapping[target] = match[0]
+
+    return mapping
+
+
+def map_columns(df, mapping):
+    new_df = pd.DataFrame()
+
+    for target_col in TARGET_COLUMNS:
+        source_col = mapping.get(target_col)
+
+        if source_col and source_col in df.columns:
+            new_df[target_col] = df[source_col]
+        else:
+            new_df[target_col] = None
+
+    return new_df
+
+
+def export_excel(df):
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+    return output
+
+
+# ===== UI =====
+
+uploaded_file = st.file_uploader("📤 Upload Excel file", type=["xlsx"])
+
+if uploaded_file:
+    df = load_excel(uploaded_file)
+
+    if df is not None:
+        st.subheader("🔍 Preview (first 10 rows)")
+        st.dataframe(df.head(10))
+
+        df_clean = clean_data(df)
+
+        st.subheader("🧹 Cleaned Data Preview")
+        st.dataframe(df_clean.head(10))
+
+        st.subheader("🔗 Column Mapping")
+
+        auto_mapping = auto_map_columns(df_clean.columns)
+
+        mapping = {}
+
+        for target in TARGET_COLUMNS:
+            default_value = auto_mapping.get(target, None)
+
+            mapping[target] = st.selectbox(
+                f"Map '{target}'",
+                options=[None] + list(df_clean.columns),
+                index=(list(df_clean.columns).index(default_value) + 1)
+                if default_value in df_clean.columns else 0
+            )
+
+        if st.button("🚀 Process Data"):
+            with st.spinner("Processing..."):
+                try:
+                    df_mapped = map_columns(df_clean, mapping)
+
+                    st.subheader("✅ Result Preview")
+                    st.dataframe(df_mapped.head(10))
+
+                    output = export_excel(df_mapped)
+
+                    st.success("Processing completed!")
+
+                    st.download_button(
+                        label="📥 Download Excel",
+                        data=output,
+                        file_name="result.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                except Exception as e:
+                    st.error(f"Error during processing: {e}")
+
+else:
+    st.info("Please upload an Excel file to begin.")
