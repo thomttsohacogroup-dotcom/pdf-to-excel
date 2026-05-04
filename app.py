@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime
 
 # Optional fuzzy matching
 try:
@@ -35,7 +34,10 @@ def load_excel(file):
         return None
 
 
-ddef clean_data(df):
+def clean_data(df):
+    # Remove empty-like strings first
+    df = df.replace(r'^\s*$', None, regex=True)
+
     # Remove empty rows
     df = df.dropna(how="all")
 
@@ -45,7 +47,7 @@ ddef clean_data(df):
     # Forward fill (fix merged cells - pandas 2.x safe)
     df = df.ffill()
 
-    # Trim whitespace (safe & faster)
+    # Trim whitespace safely
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).str.strip()
@@ -59,7 +61,7 @@ def auto_map_columns(input_columns):
     for target in TARGET_COLUMNS:
         # Exact match first
         for col in input_columns:
-            if col.lower() == target.lower():
+            if col and col.lower() == target.lower():
                 mapping[target] = col
 
         # Fuzzy match
@@ -117,11 +119,17 @@ if uploaded_file:
         for target in TARGET_COLUMNS:
             default_value = auto_mapping.get(target, None)
 
+            options = [None] + list(df_clean.columns)
+
+            if default_value in df_clean.columns:
+                default_index = options.index(default_value)
+            else:
+                default_index = 0
+
             mapping[target] = st.selectbox(
                 f"Map '{target}'",
-                options=[None] + list(df_clean.columns),
-                index=(list(df_clean.columns).index(default_value) + 1)
-                if default_value in df_clean.columns else 0
+                options=options,
+                index=default_index
             )
 
         if st.button("🚀 Process Data"):
